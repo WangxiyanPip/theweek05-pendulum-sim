@@ -22,6 +22,14 @@
     padding: 6px 14px; font: 13px monospace; cursor: pointer;
   }
   #resetBtn:hover { background: #3d7fe0; }
+  #scenes { display: flex; gap: 8px; }
+  .scene-btn {
+    background: #2a2f45; color: #c6cde8; border: 1px solid #3a4060;
+    border-radius: 999px; padding: 5px 14px; font: 13px monospace; cursor: pointer;
+    transition: background .25s, border-color .25s;
+  }
+  .scene-btn:hover { border-color: #4f83e0; }
+  .scene-btn.active { background: #2f6fd0; border-color: #2f6fd0; color: #fff; }
 </style>
 </head>
 <body>
@@ -29,7 +37,13 @@
 <div id="panel">
   <label>摆长1 <input type="range" id="l1Slider" min="80" max="200" step="1" value="140"><span class="val" id="l1Val">140 px</span></label>
   <label>摆长2 <input type="range" id="l2Slider" min="80" max="200" step="1" value="140"><span class="val" id="l2Val">140 px</span></label>
-  <label>重力 <input type="range" id="gSlider" min="1" max="25" step="0.1" value="9.8"><span class="val" id="gVal">9.8</span></label>
+  <span id="scenes">
+    <button class="scene-btn" data-g="9.8">地球</button>
+    <button class="scene-btn" data-g="1.62">月球</button>
+    <button class="scene-btn" data-g="24.79">木星</button>
+    <button class="scene-btn" data-g="0">太空</button>
+  </span>
+  <label>重力 <input type="range" id="gSlider" min="0" max="25" step="0.1" value="9.8"><span class="val" id="gVal">9.8</span></label>
   <button id="resetBtn">重置双摆</button>
   <span class="hint">拖拽摆球设置初始角度，松手释放</span>
 </div>
@@ -178,6 +192,7 @@ function draw() {
 
 let last = performance.now();
 function loop(now) {
+  tickTween(now);
   let dt = (now - last) / 1000;
   last = now;
   if (dt > 0.033) dt = 0.033;
@@ -238,19 +253,73 @@ const gSlider = document.getElementById('gSlider');
 const l1Val = document.getElementById('l1Val');
 const l2Val = document.getElementById('l2Val');
 const gVal = document.getElementById('gVal');
+const sceneBtns = [...document.querySelectorAll('.scene-btn')];
+
+// ===== localStorage 参数持久化 =====
+const STORE_KEY = 'week05_double_pendulum_params';
+
+function saveParams() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({ l1: L1_PX, l2: L2_PX, g: G }));
+  } catch (e) { /* 隐私模式等场景下静默降级 */ }
+}
+
+function clamp(n, lo, hi) { return Math.min(hi, Math.max(lo, n)); }
+
+function syncUI() {
+  l1Slider.value = L1_PX; l1Val.textContent = L1_PX + ' px';
+  l2Slider.value = L2_PX; l2Val.textContent = L2_PX + ' px';
+  gSlider.value = G; gVal.textContent = G.toFixed(1);
+  const hit = sceneBtns.find(b => Math.abs(+b.dataset.g - G) < 0.05);
+  sceneBtns.forEach(b => b.classList.toggle('active', b === hit));
+}
+
+function loadParams() {
+  try {
+    const p = JSON.parse(localStorage.getItem(STORE_KEY));
+    if (!p) return;
+    if (Number.isFinite(p.l1)) L1_PX = clamp(p.l1, 80, 200);
+    if (Number.isFinite(p.l2)) L2_PX = clamp(p.l2, 80, 200);
+    if (Number.isFinite(p.g)) G = clamp(p.g, 0, 25);
+  } catch (e) { /* 缓存损坏则用默认值 */ }
+}
+loadParams();
+syncUI();
+
+// ===== 重力平滑过渡（缓动动画）=====
+let gTween = null;   // { from, to, t0, dur }
+
+function tickTween(now) {
+  if (!gTween) return;
+  const p = Math.min(1, (now - gTween.t0) / gTween.dur);
+  const e = p < 0.5 ? 4 * p * p * p : 1 - Math.pow(-2 * p + 2, 3) / 2;
+  G = gTween.from + (gTween.to - gTween.from) * e;
+  gSlider.value = G;
+  gVal.textContent = G.toFixed(1);
+  if (p >= 1) { gTween = null; saveParams(); }
+}
 
 l1Slider.addEventListener('input', () => {
   L1_PX = +l1Slider.value;
   l1Val.textContent = L1_PX + ' px';
+  saveParams();
 });
 l2Slider.addEventListener('input', () => {
   L2_PX = +l2Slider.value;
   l2Val.textContent = L2_PX + ' px';
+  saveParams();
 });
 gSlider.addEventListener('input', () => {
+  gTween = null;
   G = +gSlider.value;
   gVal.textContent = G.toFixed(1);
+  sceneBtns.forEach(b => b.classList.toggle('active', Math.abs(+b.dataset.g - G) < 0.05));
+  saveParams();
 });
+sceneBtns.forEach(btn => btn.addEventListener('click', () => {
+  sceneBtns.forEach(b => b.classList.toggle('active', b === btn));
+  gTween = { from: G, to: +btn.dataset.g, t0: performance.now(), dur: 700 };
+}));
 document.getElementById('resetBtn').addEventListener('click', () => {
   th1 = INIT_T1; w1 = 0;
   th2 = INIT_T2; w2 = 0;
