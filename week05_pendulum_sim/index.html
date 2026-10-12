@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>单摆模拟器 - Week05 简谐振动实验</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1a1a24; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  canvas { display: block; flex: 1; min-height: 0; }
+  #panel {
+    display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+    padding: 10px 16px; background: #20202e; border-top: 1px solid #34344a;
+    font: 13px monospace; color: #c6cde8;
+  }
+  #panel label { display: flex; align-items: center; gap: 6px; }
+  #panel input[type=range] { accent-color: #4f83e0; width: 140px; }
+  #panel .val { min-width: 52px; text-align: right; color: #9ecbff; }
+  #resetBtn {
+    background: #2f6fd0; color: #eef3ff; border: 0; border-radius: 4px;
+    padding: 6px 14px; font: 13px monospace; cursor: pointer;
+  }
+  #resetBtn:hover { background: #3d7fe0; }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="panel">
+  <label>摆长 <input type="range" id="lenSlider" min="100" max="350" step="1" value="200"><span class="val" id="lenVal">200 px</span></label>
+  <label>重力 <input type="range" id="gSlider" min="1" max="25" step="0.1" value="9.8"><span class="val" id="gVal">9.8</span></label>
+  <label>阻尼 <input type="range" id="dampSlider" min="0" max="0.01" step="0.001" value="0"><span class="val" id="dampVal">0.000</span></label>
+  <button id="resetBtn">重置摆动</button>
+</div>
+<script>
+'use strict';
+
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+
+const PX_PER_M = 100;          // 像素-米换算
+const THETA0 = 45 * Math.PI / 180;
+const BOB_RADIUS = 16;
+let L_PX = 200;                // 摆长 px（滑块 100~350）
+let G = 9.8;                   // 重力加速度 m/s^2（滑块 1~25）
+let DAMP = 0;                  // 阻尼系数（滑块 0~0.01，按 60 帧/s 折算为物理阻尼项）
+
+let theta = THETA0;            // 与竖直方向夹角
+let omega = 0;                 // 角速度
+let pivotX = 0, pivotY = 0;
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  pivotX = w / 2;
+  pivotY = h * 0.25;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// theta'' = -(g/L) * sin(theta) - c * omega
+function accel(th) {
+  return -(G / (L_PX / PX_PER_M)) * Math.sin(th) - DAMP * 60 * omega;
+}
+
+// RK4 积分，保证长时间摆动数值稳定
+function stepPhysics(dt) {
+  const k1t = omega,               k1w = accel(theta);
+  const k2t = omega + k1w * dt / 2, k2w = accel(theta + k1t * dt / 2);
+  const k3t = omega + k2w * dt / 2, k3w = accel(theta + k2t * dt / 2);
+  const k4t = omega + k3w * dt,     k4w = accel(theta + k3t * dt);
+  theta += dt * (k1t + 2 * k2t + 2 * k3t + k4t) / 6;
+  omega += dt * (k1w + 2 * k2w + 2 * k3w + k4w) / 6;
+}
+
+function draw() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#1a1a24';
+  ctx.fillRect(0, 0, w, h);
+
+  const bobX = pivotX + L_PX * Math.sin(theta);
+  const bobY = pivotY + L_PX * Math.cos(theta);
+
+  // 顶部支架
+  ctx.fillStyle = '#3a3f55';
+  ctx.fillRect(pivotX - 60, pivotY - 10, 120, 6);
+
+  // 摆线
+  ctx.strokeStyle = '#8a93b2';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(pivotX, pivotY);
+  ctx.lineTo(bobX, bobY);
+  ctx.stroke();
+
+  // 支点
+  ctx.fillStyle = '#c6cde8';
+  ctx.beginPath();
+  ctx.arc(pivotX, pivotY, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 摆球：微弱发光光效
+  ctx.save();
+  ctx.shadowColor = 'rgba(96, 165, 250, 0.8)';
+  ctx.shadowBlur = 30;
+  const grad = ctx.createRadialGradient(
+    bobX - BOB_RADIUS / 3, bobY - BOB_RADIUS / 3, 2,
+    bobX, bobY, BOB_RADIUS
+  );
+  grad.addColorStop(0, '#9ecbff');
+  grad.addColorStop(1, '#2f6fd0');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(bobX, bobY, BOB_RADIUS, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // 参数面板
+  ctx.fillStyle = 'rgba(198, 205, 232, 0.75)';
+  ctx.font = '13px monospace';
+  const deg = (theta * 180 / Math.PI).toFixed(1);
+  const w2 = omega.toFixed(3);
+  const period = 2 * Math.PI * Math.sqrt((L_PX / PX_PER_M) / G);
+  ctx.fillText(`L = ${L_PX} px (${(L_PX / PX_PER_M).toFixed(1)} m)   g = ${G.toFixed(1)} m/s^2   阻尼 = ${DAMP.toFixed(3)}`, 16, 24);
+  ctx.fillText(`θ = ${deg.padStart(6)}°   ω = ${w2} rad/s`, 16, 44);
+  ctx.fillText(`小角周期 T ≈ ${period.toFixed(2)} s`, 16, 64);
+}
+
+let last = performance.now();
+function loop(now) {
+  let dt = (now - last) / 1000;
+  last = now;
+  if (dt > 0.05) dt = 0.05;      // 标签页切回时防跳变
+  const sub = 4;
+  for (let i = 0; i < sub; i++) stepPhysics(dt / sub);
+  draw();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ===== 交互控制面板 =====
+const lenSlider = document.getElementById('lenSlider');
+const gSlider = document.getElementById('gSlider');
+const dampSlider = document.getElementById('dampSlider');
+const lenVal = document.getElementById('lenVal');
+const gVal = document.getElementById('gVal');
+const dampVal = document.getElementById('dampVal');
+
+lenSlider.addEventListener('input', () => {
+  L_PX = +lenSlider.value;
+  lenVal.textContent = L_PX + ' px';
+});
+gSlider.addEventListener('input', () => {
+  G = +gSlider.value;
+  gVal.textContent = G.toFixed(1);
+});
+dampSlider.addEventListener('input', () => {
+  DAMP = +dampSlider.value;
+  dampVal.textContent = DAMP.toFixed(3);
+});
+document.getElementById('resetBtn').addEventListener('click', () => {
+  theta = THETA0;
+  omega = 0;
+});
+</script>
+</body>
+</html>
